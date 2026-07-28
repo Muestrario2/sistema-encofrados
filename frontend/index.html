@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard - Sistema de Encofrados</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+</head>
+<body class="bg-light">
+
+<div class="container mt-5 mb-5">
+    <h2 class="mb-4 text-primary">📦 Dashboard de Inventario y Operaciones</h2>
+    
+    <!-- TABLA DE INVENTARIO -->
+    <div class="card shadow-sm mb-4">
+        <div class="card-body">
+            <h5 class="card-title">Disponibilidad de Equipos (Tiempo Real)</h5>
+            <table class="table table-hover mt-3">
+                <thead class="table-dark">
+                    <tr>
+                        <th>ID Producto</th>
+                        <th>En Almacén (Disponibles)</th>
+                        <th>En Obra (Alquilados)</th>
+                        <th>En Mantenimiento</th>
+                    </tr>
+                </thead>
+                <tbody id="tabla-inventario">
+                    <!-- Datos inyectados -->
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="row">
+        <!-- PANEL DE DESPACHOS -->
+        <div class="col-md-6 mb-4">
+            <div class="card shadow-sm border-primary h-100">
+                <div class="card-body">
+                    <h5 class="card-title text-primary">🚚 Registrar Salida</h5>
+                    <form id="form-despacho" class="row g-3 mt-2">
+                        <div class="col-md-4">
+                            <label class="form-label fw-bold">ID Obra</label>
+                            <input type="number" class="form-control" id="obraId" value="1" required>
+                        </div>
+                        <div class="col-md-8">
+                            <label class="form-label fw-bold">ID Producto</label>
+                            <input type="text" class="form-control" id="prodId" value="PANEL-FENOLICO-122X244" required>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label fw-bold">Cantidad</label>
+                            <input type="number" class="form-control" id="cantId" placeholder="Ej: 100" required>
+                        </div>
+                        <div class="col-md-6 d-flex align-items-end">
+                            <button type="submit" class="btn btn-primary w-100 fw-bold">Despachar</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- PANEL DE DEVOLUCIONES -->
+        <div class="col-md-6 mb-4">
+            <div class="card shadow-sm border-warning h-100">
+                <div class="card-body">
+                    <h5 class="card-title text-warning text-dark">🔙 Registrar Devolución</h5>
+                    <form id="form-devolucion" class="row g-3 mt-2">
+                        <div class="col-md-4">
+                            <label class="form-label fw-bold">ID Obra</label>
+                            <input type="number" class="form-control" id="devObraId" value="1" required>
+                        </div>
+                        <div class="col-md-8">
+                            <label class="form-label fw-bold">ID Producto</label>
+                            <input type="text" class="form-control" id="devProdId" value="PANEL-FENOLICO-122X244" required>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label fw-bold text-success">Buen Estado</label>
+                            <input type="number" class="form-control" id="devBuena" value="0" min="0" required>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label fw-bold text-warning">Mantenim.</label>
+                            <input type="number" class="form-control" id="devMant" value="0" min="0" required>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label fw-bold text-danger">Pérdida</label>
+                            <input type="number" class="form-control" id="devPerdida" value="0" min="0" required>
+                        </div>
+                        <div class="col-12 text-end mt-2">
+                            <button type="submit" class="btn btn-warning fw-bold w-100">Procesar Devolución</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- PANEL DE LIQUIDACIÓN DE OBRA -->
+        <div class="col-md-12">
+            <div class="card shadow-sm border-danger">
+                <div class="card-body">
+                    <h5 class="card-title text-danger">💰 Liquidación de Obra (Penalidades por Pérdida)</h5>
+                    <form id="form-liquidacion" class="row g-3 mt-2">
+                        <div class="col-md-3">
+                            <label class="form-label fw-bold">ID Obra a liquidar</label>
+                            <input type="number" class="form-control" id="liqObraId" value="1" required>
+                        </div>
+                        <div class="col-md-3 d-flex align-items-end">
+                            <button type="submit" class="btn btn-danger w-100 fw-bold">Generar Cobro</button>
+                        </div>
+                    </form>
+                    
+                    <!-- NUEVO DISEÑO PROFESIONAL DE DOCUMENTO (Oculto hasta calcular) -->
+                    <div id="resultado-liquidacion" class="mt-4" style="display: none;">
+                        
+                        <div id="ticket-pdf" style="background-color: #ffffff; padding: 40px; border: 1px solid #ddd; border-radius: 4px; font-family: Arial, sans-serif; color: #333;">
+                            
+                            <!-- Cabecera del Documento -->
+                            <div style="text-align: center; border-bottom: 3px solid #dc3545; padding-bottom: 15px; margin-bottom: 25px;">
+                                <h2 style="color: #dc3545; font-weight: 900; margin: 0; text-transform: uppercase; letter-spacing: 1px;">LIQUIDACIÓN DE PENALIDADES</h2>
+                                <p style="margin: 5px 0 0; color: #666; font-size: 15px;">Sistema de Control de Encofrados y Equipos</p>
+                            </div>
+                            
+                            <!-- Datos Generales -->
+                            <div style="display: flex; justify-content: space-between; margin-bottom: 30px; font-size: 15px;">
+                                <div>
+                                    <p style="margin: 0 0 5px 0;"><strong>Código de Obra:</strong> <span id="pdf-obra-id"></span></p>
+                                    <p style="margin: 0;"><strong>Cliente:</strong> Contratista Principal</p>
+                                </div>
+                                <div style="text-align: right;">
+                                    <p style="margin: 0 0 5px 0;"><strong>Fecha de Emisión:</strong> <span id="pdf-fecha"></span></p>
+                                    <p style="margin: 0;"><strong>Documento N°:</strong> LQ-001</p>
+                                </div>
+                            </div>
+
+                            <!-- Tabla de Equipos Perdidos -->
+                            <table style="width: 100%; border-collapse: collapse; margin-bottom: 30px; font-size: 15px;">
+                                <thead>
+                                    <tr style="background-color: #f8f9fa; border-bottom: 2px solid #dee2e6;">
+                                        <th style="padding: 12px; text-align: center; width: 10%;">Cant.</th>
+                                        <th style="padding: 12px; text-align: left; width: 50%;">Descripción del Equipo</th>
+                                        <th style="padding: 12px; text-align: right; width: 20%;">Costo Unit.</th>
+                                        <th style="padding: 12px; text-align: right; width: 20%;">Subtotal</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="liqDetallesTabla">
+                                    <!-- Se llena con JavaScript -->
+                                </tbody>
+                            </table>
+
+                            <!-- Total -->
+                            <div style="text-align: right; border-top: 3px solid #dc3545; padding-top: 20px;">
+                                <h3 style="margin: 0; color: #dc3545; font-weight: bold;">TOTAL A FACTURAR: S/ <span id="liqTotal">0.00</span></h3>
+                            </div>
+                            
+                            <!-- Pie de página -->
+                            <div style="margin-top: 50px; text-align: center; color: #888; font-size: 12px; border-top: 1px solid #eee; padding-top: 15px;">
+                                Este documento detalla los equipos no devueltos o destruidos en obra según el inventario físico.<br>
+                                Documento generado automáticamente por el sistema.
+                            </div>
+                        </div>
+                        
+                        <!-- Botón de descarga -->
+                        <button id="btnDescargarPdf" class="btn btn-dark w-100 fw-bold mt-3 py-2">📄 Descargar Liquidación en PDF (A4)</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+</div>
+
+<script>
+    // 1. Cargar la tabla
+    async function cargarInventario() {
+        try {
+            const respuesta = await fetch('/dashboard/inventario/');
+            const datos = await respuesta.json();
+            const tabla = document.getElementById('tabla-inventario');
+            tabla.innerHTML = ''; 
+            datos.forEach(item => {
+                const fila = `
+                    <tr>
+                        <td><strong>${item.id_producto}</strong></td>
+                        <td class="text-success fw-bold">${item.cantidad_almacen}</td>
+                        <td class="text-primary fw-bold">${item.cantidad_en_obra}</td>
+                        <td class="text-warning fw-bold">${item.cantidad_mantenimiento}</td>
+                    </tr>`;
+                tabla.innerHTML += fila;
+            });
+        } catch (error) { console.error(error); }
+    }
+
+    // 2. Despachos
+    document.getElementById('form-despacho').addEventListener('submit', async function(e) {
+        e.preventDefault(); 
+        const datos = {
+            tipo_movimiento: "Salida", id_obra: parseInt(document.getElementById('obraId').value),
+            id_producto: document.getElementById('prodId').value, cantidad: parseInt(document.getElementById('cantId').value)
+        };
+        const res = await fetch('/despachos/', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(datos) });
+        if (res.ok) { alert("✅ Material despachado."); cargarInventario(); } else { alert("❌ Error."); }
+    });
+
+    // 3. Devoluciones
+    document.getElementById('form-devolucion').addEventListener('submit', async function(e) {
+        e.preventDefault(); 
+        const datos = {
+            id_obra: parseInt(document.getElementById('devObraId').value), id_producto: document.getElementById('devProdId').value,
+            cantidad_buena: parseInt(document.getElementById('devBuena').value), cantidad_mantenimiento: parseInt(document.getElementById('devMant').value),
+            cantidad_perdida: parseInt(document.getElementById('devPerdida').value)
+        };
+        const res = await fetch('/devoluciones/', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(datos) });
+        if (res.ok) { alert("✅ Devolución procesada."); cargarInventario(); } else { alert("❌ Error."); }
+    });
+
+    // 4. Liquidación con nuevo formato
+    document.getElementById('form-liquidacion').addEventListener('submit', async function(e) {
+        e.preventDefault();
+        const idObra = document.getElementById('liqObraId').value;
+        try {
+            const respuesta = await fetch(`/obras/${idObra}/liquidacion/`);
+            if (respuesta.ok) {
+                const datos = await respuesta.json();
+                
+                document.getElementById('resultado-liquidacion').style.display = 'block';
+                document.getElementById('liqTotal').innerText = datos.penalidad_total_moneda.toFixed(2);
+                document.getElementById('pdf-obra-id').innerText = "OBR-" + String(idObra).padStart(4, '0');
+                
+                const hoy = new Date();
+                document.getElementById('pdf-fecha').innerText = hoy.toLocaleDateString('es-PE');
+                
+                const tablaBody = document.getElementById('liqDetallesTabla');
+                tablaBody.innerHTML = '';
+                
+                if(datos.desglose_perdidas.length === 0) {
+                    tablaBody.innerHTML = '<tr><td colspan="4" style="padding: 15px; text-align: center; color: #666;">No hay penalidades registradas. Devolución al 100%.</td></tr>';
+                } else {
+                    datos.desglose_perdidas.forEach(item => {
+                        tablaBody.innerHTML += `
+                            <tr style="border-bottom: 1px solid #eee;">
+                                <td style="padding: 12px; text-align: center; font-weight: bold;">${item.cantidad_perdida}</td>
+                                <td style="padding: 12px;">${item.producto}</td>
+                                <td style="padding: 12px; text-align: right;">S/ ${item.costo_unitario.toFixed(2)}</td>
+                                <td style="padding: 12px; text-align: right; font-weight: bold;">S/ ${item.subtotal_cobro.toFixed(2)}</td>
+                            </tr>`;
+                    });
+                }
+            } else { alert("❌ Error al liquidar la obra."); }
+        } catch (error) { alert("Error de conexión."); }
+    });
+
+    // 5. Descargar PDF perfecto
+    document.getElementById('btnDescargarPdf').addEventListener('click', function() {
+        // Truco 1: Evitar error de scroll
+        window.scrollTo(0, 0);
+        // Truco 2: Quitar selección de texto (la rayita del cursor)
+        window.getSelection().removeAllRanges();
+        
+        const elemento = document.getElementById('ticket-pdf');
+        
+        const opciones = {
+            margin:       0.5,
+            filename:     'Liquidacion_Obra_' + document.getElementById('liqObraId').value + '.pdf',
+            image:        { type: 'jpeg', quality: 0.98 },
+            html2canvas:  { scale: 2, scrollY: 0 },
+            jsPDF:        { unit: 'in', format: 'a4', orientation: 'portrait' }
+        };
+
+        html2pdf().set(opciones).from(elemento).save();
+    });
+
+    cargarInventario();
+</script>
+</body>
+</html>
