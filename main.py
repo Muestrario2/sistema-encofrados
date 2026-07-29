@@ -1,6 +1,7 @@
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI, Depends, HTTPException
 from sqlalchemy.orm import Session
+from sqlalchemy import text
 import models
 import schemas
 from fastapi.staticfiles import StaticFiles
@@ -11,16 +12,16 @@ models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="API - Sistema de Encofrados")
 
-# Configuración de CORS para permitir que el HTML se conecte
+# Configuración de CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # El asterisco significa "Permitir a todos"
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Le dice al servidor que aloje nuestra página web en la ruta /app
+# Aloja la página web en la ruta /app
 app.mount("/app", StaticFiles(directory="frontend", html=True), name="frontend")
 
 @app.get("/")
@@ -57,24 +58,19 @@ def registrar_obra(obra: schemas.ObraBase, db: Session = Depends(get_db)):
 
 @app.post("/despachos/", response_model=schemas.MovimientoBase)
 def registrar_despacho(movimiento: schemas.MovimientoBase, db: Session = Depends(get_db)):
-    # 1. Seguridad: Verificar que sea una "Salida"
     if movimiento.tipo_movimiento != "Salida":
         raise HTTPException(status_code=400, detail="Esta ruta es solo para Salidas")
     
-    # 2. Buscar el inventario de ese producto
     inventario = db.query(models.InventarioLotes).filter(models.InventarioLotes.id_producto == movimiento.id_producto).first()
     
-    # 3. Seguridad: Verificar si existe el producto y si hay stock suficiente
     if not inventario:
         raise HTTPException(status_code=404, detail="Producto no encontrado en el inventario")
     if inventario.cantidad_almacen < movimiento.cantidad:
         raise HTTPException(status_code=400, detail=f"Stock insuficiente. Solo hay {inventario.cantidad_almacen} disponibles.")
 
-    # 4. Actualizar cantidades
     inventario.cantidad_almacen -= movimiento.cantidad
     inventario.cantidad_en_obra += movimiento.cantidad
 
-    # 5. Registrar en el historial de movimientos internos (GuiaMovimiento)
     nuevo_movimiento = models.GuiaMovimiento(
         tipo_movimiento=movimiento.tipo_movimiento,
         id_obra=movimiento.id_obra,
@@ -83,26 +79,20 @@ def registrar_despacho(movimiento: schemas.MovimientoBase, db: Session = Depends
     )
     db.add(nuevo_movimiento)
 
-    # 6. NUEVO: Registrar en la tabla del Kardex en Supabase
+    # Registrar el movimiento en el Kardex
     try:
-        supabase_client = engine.raw_connection() # O usando tu conexion activa de supabase
-        # Usando inserción directa vía Supabase si está disponible en tu entorno, 
-        # o alternativamente si usas la librería oficial de Supabase python:
-        import os
-        from supabase import create_client
-        supabase_url = os.getenv("SUPABASE_URL")
-        supabase_key = os.getenv("SUPABASE_KEY")
-        if supabase_url and supabase_key:
-            supabase = create_client(supabase_url, supabase_key)
-            supabase.table("movimientos_kardex").insert({
-                "id_obra": movimiento.id_obra,
-                "id_producto": movimiento.id_producto,
+        db.execute(
+            text("INSERT INTO movimientos_kardex (id_obra, id_producto, tipo, detalle, cantidad) VALUES (:obra, :prod, :tipo, :det, :cant)"),
+            {
+                "obra": movimiento.id_obra,
+                "prod": movimiento.id_producto,
                 "tipo": "SALIDA",
-                "detalle": f"Salida hacia obra #{movimiento.id_obra}",
-                "cantidad": movimiento.cantidad
-            }).execute()
+                "det": f"Salida hacia obra #{movimiento.id_obra}",
+                "cant": movimiento.cantidad
+            }
+        )
     except Exception as e:
-        print("Aviso al registrar en Kardex externo:", e)
+        print("Error al registrar en Kardex:", e)
 
     db.commit()
     return nuevo_movimiento
@@ -111,22 +101,18 @@ def registrar_despacho(movimiento: schemas.MovimientoBase, db: Session = Depends
 def registrar_devolucion(devolucion: schemas.DevolucionBase, db: Session = Depends(get_db)):
     total_devuelto = devolucion.cantidad_buena + devolucion.cantidad_mantenimiento + devolucion.cantidad_perdida
     
-    # 1. Buscar el inventario de ese producto
     inventario = db.query(models.InventarioLotes).filter(models.InventarioLotes.id_producto == devolucion.id_producto).first()
     
     if not inventario:
         raise HTTPException(status_code=404, detail="Producto no encontrado")
         
-    # 2. Seguridad: Verificar que no devuelvan más de lo que llevaron
     if inventario.cantidad_en_obra < total_devuelto:
         raise HTTPException(status_code=400, detail=f"Inconsistencia: La obra solo tiene {inventario.cantidad_en_obra} unidades registradas.")
         
-    # 3. Repartir el stock según el estado en el que regresó
     inventario.cantidad_en_obra -= total_devuelto
     inventario.cantidad_almacen += devolucion.cantidad_buena
     inventario.cantidad_mantenimiento += devolucion.cantidad_mantenimiento
     
-    # 4. Guardar un registro histórico por cada estado para auditorías
     if devolucion.cantidad_buena > 0:
         db.add(models.GuiaMovimiento(tipo_movimiento="Devolucion_Buena", id_obra=devolucion.id_obra, id_producto=devolucion.id_producto, cantidad=devolucion.cantidad_buena))
     if devolucion.cantidad_mantenimiento > 0:
@@ -134,24 +120,21 @@ def registrar_devolucion(devolucion: schemas.DevolucionBase, db: Session = Depen
     if devolucion.cantidad_perdida > 0:
         db.add(models.GuiaMovimiento(tipo_movimiento="Devolucion_Perdida", id_obra=devolucion.id_obra, id_producto=devolucion.id_producto, cantidad=devolucion.cantidad_perdida))
         
-    # 5. NUEVO: Registrar la devolución en el Kardex de Supabase
+    # Registrar la devolución en el Kardex
     try:
-        import os
-        from supabase import create_client
-        supabase_url = os.getenv("SUPABASE_URL")
-        supabase_key = os.getenv("SUPABASE_KEY")
-        if supabase_url and supabase_key:
-            supabase = create_client(supabase_url, supabase_key)
-            detalle_str = f"Buena: {devolucion.cantidad_buena} | Mant: {devolucion.cantidad_mantenimiento} | Pérdida: {devolucion.cantidad_perdida}"
-            supabase.table("movimientos_kardex").insert({
-                "id_obra": devolucion.id_obra,
-                "id_producto": devolucion.id_producto,
+        detalle_str = f"Buena: {devolucion.cantidad_buena} | Mant: {devolucion.cantidad_mantenimiento} | Pérdida: {devolucion.cantidad_perdida}"
+        db.execute(
+            text("INSERT INTO movimientos_kardex (id_obra, id_producto, tipo, detalle, cantidad) VALUES (:obra, :prod, :tipo, :det, :cant)"),
+            {
+                "obra": devolucion.id_obra,
+                "prod": devolucion.id_producto,
                 "tipo": "DEVOLUCIÓN",
-                "detalle": detalle_str,
-                "cantidad": total_devuelto
-            }).execute()
+                "det": detalle_str,
+                "cant": total_devuelto
+            }
+        )
     except Exception as e:
-        print("Aviso al registrar devolución en Kardex:", e)
+        print("Error al registrar devolución en Kardex:", e)
 
     db.commit()
     return {
@@ -160,38 +143,33 @@ def registrar_devolucion(devolucion: schemas.DevolucionBase, db: Session = Depen
         "pendientes_en_obra": inventario.cantidad_en_obra
     }
 
-# ==========================================
-# ENDPOINT DEL KARDEX
-# ==========================================
-
+# ENDPOINT PARA LEER EL KARDEX
 @app.get("/kardex/")
-def obtener_kardex():
+def obtener_kardex(db: Session = Depends(get_db)):
     try:
-        import os
-        from supabase import create_client
-        supabase_url = os.getenv("SUPABASE_URL")
-        supabase_key = os.getenv("SUPABASE_KEY")
-        if supabase_url and supabase_key:
-            supabase = create_client(supabase_url, supabase_key)
-            response = supabase.table("movimientos_kardex").select("*").order("created_at", desc=True).limit(50).execute()
-            return response.data
-        return []
+        movimientos = db.execute(text("SELECT * FROM movimientos_kardex ORDER BY created_at DESC LIMIT 50")).fetchall()
+        resultado = []
+        for m in movimientos:
+            resultado.append({
+                "id": m[0],
+                "created_at": m[1],
+                "id_obra": m[2],
+                "id_producto": m[3],
+                "tipo": m[4],
+                "detalle": m[5],
+                "cantidad": m[6]
+            })
+        return resultado
     except Exception as e:
-        return {"error": str(e)}
+        return []
 
-# ==========================================
 # REPORTES Y DASHBOARD
-# ==========================================
-
 @app.get("/dashboard/inventario/")
 def ver_estado_inventario(db: Session = Depends(get_db)):
-    # Trae todo el inventario actual
-    lista_inventario = db.query(models.InventarioLotes).all()
-    return lista_inventario
+    return db.query(models.InventarioLotes).all()
 
 @app.get("/obras/{id_obra}/liquidacion/")
 def liquidar_obra(id_obra: int, db: Session = Depends(get_db)):
-    # Busca todos los registros de material perdido para esta obra
     movimientos_perdidos = db.query(models.GuiaMovimiento).filter(
         models.GuiaMovimiento.id_obra == id_obra,
         models.GuiaMovimiento.tipo_movimiento == "Devolucion_Perdida"
@@ -200,7 +178,6 @@ def liquidar_obra(id_obra: int, db: Session = Depends(get_db)):
     total_a_cobrar = 0
     detalles = []
 
-    # Calcula el costo multiplicando las unidades perdidas por el costo de reposición
     for mov in movimientos_perdidos:
         producto = db.query(models.CatalogoProducto).filter(models.CatalogoProducto.id_producto == mov.id_producto).first()
         costo_penalidad = producto.costo_reposicion * mov.cantidad
