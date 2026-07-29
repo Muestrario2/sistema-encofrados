@@ -1,3 +1,4 @@
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI, Depends, HTTPException
 from sqlalchemy.orm import Session
 import models
@@ -9,6 +10,15 @@ from database import engine, get_db
 models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="API - Sistema de Encofrados")
+
+# Configuración de CORS para permitir que el HTML se conecte
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # El asterisco significa "Permitir a todos"
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # NUEVA LÍNEA: Le dice al servidor que aloje nuestra página web en la ruta /app
 app.mount("/app", StaticFiles(directory="frontend", html=True), name="frontend")
