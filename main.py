@@ -1,3 +1,4 @@
+from fastapi import FastAPI, Depends, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -140,9 +141,13 @@ def registrar_devolucion(devolucion: schemas.DevolucionBase, db: Session = Depen
         "pendientes_en_obra": inventario.cantidad_en_obra
     }
 
-# ENDPOINT PARA LEER EL KARDEX ORDENADO POR FECHA
+# ENDPOINT PARA LEER EL KARDEX SIN CACHÉ
 @app.get("/kardex/")
-def obtener_kardex(db: Session = Depends(get_db)):
+def obtener_kardex(response: Response, db: Session = Depends(get_db)):
+    # Cabeceras anti-caché para forzar datos en tiempo real
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    
     try:
         movimientos = db.execute(text("SELECT id, fecha, id_obra, id_producto, tipo, cantidad FROM movimientos_kardex ORDER BY fecha DESC LIMIT 50")).fetchall()
         resultado = []
@@ -150,7 +155,7 @@ def obtener_kardex(db: Session = Depends(get_db)):
             resultado.append({
                 "id": m[0],
                 "fecha": m[1],
-                "created_at": m[1], # compatibilidad con el frontend
+                "created_at": m[1],
                 "id_obra": m[2],
                 "id_producto": m[3],
                 "tipo": m[4],
@@ -161,6 +166,13 @@ def obtener_kardex(db: Session = Depends(get_db)):
     except Exception as e:
         print("Error al leer Kardex:", e)
         return []
+
+# ESTADO DE INVENTARIO SIN CACHÉ
+@app.get("/dashboard/inventario/")
+def ver_estado_inventario(response: Response, db: Session = Depends(get_db)):
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    return db.query(models.InventarioLotes).all()
 
 # REPORTES Y DASHBOARD
 @app.get("/dashboard/inventario/")
