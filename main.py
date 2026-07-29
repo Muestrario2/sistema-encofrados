@@ -20,7 +20,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# NUEVA LÍNEA: Le dice al servidor que aloje nuestra página web en la ruta /app
+# Le dice al servidor que aloje nuestra página web en la ruta /app
 app.mount("/app", StaticFiles(directory="frontend", html=True), name="frontend")
 
 @app.get("/")
@@ -74,7 +74,7 @@ def registrar_despacho(movimiento: schemas.MovimientoBase, db: Session = Depends
     inventario.cantidad_almacen -= movimiento.cantidad
     inventario.cantidad_en_obra += movimiento.cantidad
 
-    # 5. Registrar en el historial de movimientos
+    # 5. Registrar en el historial de movimientos internos (GuiaMovimiento)
     nuevo_movimiento = models.GuiaMovimiento(
         tipo_movimiento=movimiento.tipo_movimiento,
         id_obra=movimiento.id_obra,
@@ -82,6 +82,28 @@ def registrar_despacho(movimiento: schemas.MovimientoBase, db: Session = Depends
         cantidad=movimiento.cantidad
     )
     db.add(nuevo_movimiento)
+
+    # 6. NUEVO: Registrar en la tabla del Kardex en Supabase
+    try:
+        supabase_client = engine.raw_connection() # O usando tu conexion activa de supabase
+        # Usando inserción directa vía Supabase si está disponible en tu entorno, 
+        # o alternativamente si usas la librería oficial de Supabase python:
+        import os
+        from supabase import create_client
+        supabase_url = os.getenv("SUPABASE_URL")
+        supabase_key = os.getenv("SUPABASE_KEY")
+        if supabase_url and supabase_key:
+            supabase = create_client(supabase_url, supabase_key)
+            supabase.table("movimientos_kardex").insert({
+                "id_obra": movimiento.id_obra,
+                "id_producto": movimiento.id_producto,
+                "tipo": "SALIDA",
+                "detalle": f"Salida hacia obra #{movimiento.id_obra}",
+                "cantidad": movimiento.cantidad
+            }).execute()
+    except Exception as e:
+        print("Aviso al registrar en Kardex externo:", e)
+
     db.commit()
     return nuevo_movimiento
 
@@ -112,12 +134,50 @@ def registrar_devolucion(devolucion: schemas.DevolucionBase, db: Session = Depen
     if devolucion.cantidad_perdida > 0:
         db.add(models.GuiaMovimiento(tipo_movimiento="Devolucion_Perdida", id_obra=devolucion.id_obra, id_producto=devolucion.id_producto, cantidad=devolucion.cantidad_perdida))
         
+    # 5. NUEVO: Registrar la devolución en el Kardex de Supabase
+    try:
+        import os
+        from supabase import create_client
+        supabase_url = os.getenv("SUPABASE_URL")
+        supabase_key = os.getenv("SUPABASE_KEY")
+        if supabase_url and supabase_key:
+            supabase = create_client(supabase_url, supabase_key)
+            detalle_str = f"Buena: {devolucion.cantidad_buena} | Mant: {devolucion.cantidad_mantenimiento} | Pérdida: {devolucion.cantidad_perdida}"
+            supabase.table("movimientos_kardex").insert({
+                "id_obra": devolucion.id_obra,
+                "id_producto": devolucion.id_producto,
+                "tipo": "DEVOLUCIÓN",
+                "detalle": detalle_str,
+                "cantidad": total_devuelto
+            }).execute()
+    except Exception as e:
+        print("Aviso al registrar devolución en Kardex:", e)
+
     db.commit()
     return {
         "mensaje": "Devolución procesada con éxito", 
         "total_retornado": total_devuelto,
         "pendientes_en_obra": inventario.cantidad_en_obra
     }
+
+# ==========================================
+# ENDPOINT DEL KARDEX
+# ==========================================
+
+@app.get("/kardex/")
+def obtener_kardex():
+    try:
+        import os
+        from supabase import create_client
+        supabase_url = os.getenv("SUPABASE_URL")
+        supabase_key = os.getenv("SUPABASE_KEY")
+        if supabase_url and supabase_key:
+            supabase = create_client(supabase_url, supabase_key)
+            response = supabase.table("movimientos_kardex").select("*").order("created_at", desc=True).limit(50).execute()
+            return response.data
+        return []
+    except Exception as e:
+        return {"error": str(e)}
 
 # ==========================================
 # REPORTES Y DASHBOARD
