@@ -79,15 +79,14 @@ def registrar_despacho(movimiento: schemas.MovimientoBase, db: Session = Depends
     )
     db.add(nuevo_movimiento)
 
-    # Registrar el movimiento en el Kardex
+    # Registrar en el Kardex usando la columna 'fecha'
     try:
         db.execute(
-            text("INSERT INTO movimientos_kardex (id_obra, id_producto, tipo, detalle, cantidad) VALUES (:obra, :prod, :tipo, :det, :cant)"),
+            text("INSERT INTO movimientos_kardex (id_obra, id_producto, tipo, cantidad) VALUES (:obra, :prod, :tipo, :cant)"),
             {
                 "obra": movimiento.id_obra,
                 "prod": movimiento.id_producto,
                 "tipo": "SALIDA",
-                "det": f"Salida hacia obra #{movimiento.id_obra}",
                 "cant": movimiento.cantidad
             }
         )
@@ -120,16 +119,14 @@ def registrar_devolucion(devolucion: schemas.DevolucionBase, db: Session = Depen
     if devolucion.cantidad_perdida > 0:
         db.add(models.GuiaMovimiento(tipo_movimiento="Devolucion_Perdida", id_obra=devolucion.id_obra, id_producto=devolucion.id_producto, cantidad=devolucion.cantidad_perdida))
         
-    # Registrar la devolución en el Kardex
+    # Registrar la devolución en el Kardex usando la columna 'fecha'
     try:
-        detalle_str = f"Buena: {devolucion.cantidad_buena} | Mant: {devolucion.cantidad_mantenimiento} | Pérdida: {devolucion.cantidad_perdida}"
         db.execute(
-            text("INSERT INTO movimientos_kardex (id_obra, id_producto, tipo, detalle, cantidad) VALUES (:obra, :prod, :tipo, :det, :cant)"),
+            text("INSERT INTO movimientos_kardex (id_obra, id_producto, tipo, cantidad) VALUES (:obra, :prod, :tipo, :cant)"),
             {
                 "obra": devolucion.id_obra,
                 "prod": devolucion.id_producto,
                 "tipo": "DEVOLUCIÓN",
-                "det": detalle_str,
                 "cant": total_devuelto
             }
         )
@@ -143,24 +140,26 @@ def registrar_devolucion(devolucion: schemas.DevolucionBase, db: Session = Depen
         "pendientes_en_obra": inventario.cantidad_en_obra
     }
 
-# ENDPOINT PARA LEER EL KARDEX
+# ENDPOINT PARA LEER EL KARDEX ORDENADO POR FECHA
 @app.get("/kardex/")
 def obtener_kardex(db: Session = Depends(get_db)):
     try:
-        movimientos = db.execute(text("SELECT * FROM movimientos_kardex ORDER BY created_at DESC LIMIT 50")).fetchall()
+        movimientos = db.execute(text("SELECT id, fecha, id_obra, id_producto, tipo, cantidad FROM movimientos_kardex ORDER BY fecha DESC LIMIT 50")).fetchall()
         resultado = []
         for m in movimientos:
             resultado.append({
                 "id": m[0],
-                "created_at": m[1],
+                "fecha": m[1],
+                "created_at": m[1], # compatibilidad con el frontend
                 "id_obra": m[2],
                 "id_producto": m[3],
                 "tipo": m[4],
-                "detalle": m[5],
-                "cantidad": m[6]
+                "detalle": f"Movimiento de {m[4].lower()} registrado",
+                "cantidad": m[5]
             })
         return resultado
     except Exception as e:
+        print("Error al leer Kardex:", e)
         return []
 
 # REPORTES Y DASHBOARD
