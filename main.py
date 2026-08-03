@@ -104,21 +104,29 @@ def ver_estado_inventario(response: Response, db: Session = Depends(get_db), usu
 @app.get("/kardex/")
 def obtener_kardex(response: Response, db: Session = Depends(get_db), usuario_activo = Depends(get_usuario_actual)):
     response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
-    try:
-        kardex = db.query(models.MovimientosKardex).order_by(models.MovimientosKardex.created_at.desc()).all()
-        return kardex
-    except Exception as e:
-        # Por si el campo created_at no se llama así en tu base de datos
-        kardex = db.query(models.MovimientosKardex).order_by(models.MovimientosKardex.id.desc()).all()
-        return kardex
+    # Ahora lee de TU tabla GuiaMovimiento original
+    kardex = db.query(models.GuiaMovimiento).order_by(models.GuiaMovimiento.fecha_hora.desc()).all()
+    
+    # Adaptamos los datos para que tu web los entienda sin cambiar nada en el Frontend
+    resultado = []
+    for mov in kardex:
+        resultado.append({
+            "tipo": mov.tipo_movimiento,
+            "fecha": mov.fecha_hora,
+            "id_obra": mov.id_obra,
+            "id_producto": mov.id_producto,
+            "cantidad": mov.cantidad,
+            "detalle": f"Registrado por {usuario_activo.username}"
+        })
+    return resultado
 
 @app.post("/despachos/")
 def registrar_despacho(movimiento: MovimientoCreate, db: Session = Depends(get_db), usuario_activo = Depends(get_usuario_actual)):
     try:
-        nuevo_movimiento = models.MovimientosKardex(
+        nuevo_movimiento = models.GuiaMovimiento(
             id_obra=movimiento.id_obra,
             id_producto=movimiento.id_producto,
-            tipo="SALIDA",
+            tipo_movimiento="SALIDA",
             cantidad=movimiento.cantidad
         )
         db.add(nuevo_movimiento)
@@ -148,19 +156,21 @@ def registrar_devolucion(devolucion: DevolucionCreate, db: Session = Depends(get
         if total_devuelto == 0:
             raise HTTPException(status_code=400, detail="La cantidad total devuelta debe ser mayor a 0")
             
-        nuevo_movimiento = models.MovimientosKardex(
+        nuevo_movimiento = models.GuiaMovimiento(
             id_obra=devolucion.id_obra,
             id_producto=devolucion.id_producto,
-            tipo="DEVOLUCIÓN",
+            tipo_movimiento="DEVOLUCIÓN",
             cantidad=total_devuelto
         )
         db.add(nuevo_movimiento)
         
         if devolucion.cantidad_perdida > 0:
-            perdida = models.RegistroPerdidas(
+            # Registramos la pérdida como un movimiento especial
+            perdida = models.GuiaMovimiento(
                 id_obra=devolucion.id_obra,
                 id_producto=devolucion.id_producto,
-                cantidad_perdida=devolucion.cantidad_perdida
+                tipo_movimiento="PÉRDIDA",
+                cantidad=devolucion.cantidad_perdida
             )
             db.add(perdida)
             
@@ -185,20 +195,25 @@ def registrar_devolucion(devolucion: DevolucionCreate, db: Session = Depends(get
 
 @app.get("/obras/{id_obra}/liquidacion/")
 def generar_liquidacion(id_obra: int, db: Session = Depends(get_db), usuario_activo = Depends(get_usuario_actual)):
-    perdidas = db.query(models.RegistroPerdidas).filter(models.RegistroPerdidas.id_obra == id_obra).all()
+    # Buscamos las pérdidas en la misma tabla GuiaMovimiento
+    perdidas = db.query(models.GuiaMovimiento).filter(
+        models.GuiaMovimiento.id_obra == id_obra,
+        models.GuiaMovimiento.tipo_movimiento == "PÉRDIDA"
+    ).all()
     
     total_penalidad = 0
     desglose = []
     
     for p in perdidas:
-        producto = db.query(models.CatProductos).filter(models.CatProductos.id == p.id_producto).first()
-        precio = producto.precio_reposicion if producto else 0
-        subtotal = p.cantidad_perdida * precio
+        # Usa TU modelo CatalogoProducto
+        producto = db.query(models.CatalogoProducto).filter(models.CatalogoProducto.id_producto == p.id_producto).first()
+        precio = producto.costo_reposicion if producto else 0
+        subtotal = p.cantidad * precio
         total_penalidad += subtotal
         
         desglose.append({
             "producto": p.id_producto,
-            "cantidad_perdida": p.cantidad_perdida,
+            "cantidad_perdida": p.cantidad,
             "costo_unitario": precio,
             "subtotal_cobro": subtotal
         })
