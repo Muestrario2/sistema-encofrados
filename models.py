@@ -33,3 +33,11 @@ class GuiaMovimiento(Base):
     id_producto = Column(String, ForeignKey("catalogo_productos.id_producto"))
     cantidad = Column(Integer, nullable=False)
     fecha_hora = Column(DateTime, default=datetime.utcnow)
+
+class Usuario(Base):
+    __tablename__ = "usuarios"
+
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String, unique=True, nullable=False)
+    password_hash = Column(String, nullable=False)
+    rol = Column(String, nullable=False)   

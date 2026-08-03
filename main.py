@@ -7,11 +7,50 @@ import models
 import schemas
 from fastapi.staticfiles import StaticFiles
 from database import engine, get_db
+import jwt
+from datetime import datetime, timedelta
+from pydantic import BaseModel
 
 # Crea las tablas
 models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="API - Sistema de Encofrados")
+
+# --- CONFIGURACIÓN DE SEGURIDAD JWT ---
+SECRET_KEY = "InmoFormwork_Clave_Ultra_Segura_2026"
+ALGORITHM = "HS256"
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+@app.post("/login/")
+def iniciar_sesion(req: LoginRequest, db: Session = Depends(get_db)):
+    # 1. Buscar al usuario en la base de datos
+    usuario = db.query(models.Usuario).filter(models.Usuario.username == req.username).first()
+    
+    # 2. Verificar que exista y que la contraseña coincida 
+    # (En producción se usa passlib para desencriptar, aquí comparamos texto por simplicidad del demo)
+    if not usuario or usuario.password_hash != req.password:
+        raise HTTPException(status_code=401, detail="Usuario o contraseña incorrectos")
+    
+    # 3. Generar el Token JWT que expira en 8 horas
+    expiracion = datetime.utcnow() + timedelta(hours=8)
+    token_data = {
+        "sub": usuario.username,
+        "rol": usuario.rol,
+        "exp": expiracion
+    }
+    
+    token = jwt.encode(token_data, SECRET_KEY, algorithm=ALGORITHM)
+    
+    # 4. Devolver el token y el rol al frontend
+    return {
+        "access_token": token,
+        "rol": usuario.rol,
+        "token_type": "bearer",
+        "mensaje": f"Bienvenido {usuario.username}"
+    }
 
 # Configuración de CORS
 app.add_middleware(
