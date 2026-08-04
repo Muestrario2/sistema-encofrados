@@ -9,12 +9,10 @@ from datetime import datetime, timedelta
 from database import SessionLocal, engine
 import models
 
-# Crear tablas en BD
 models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="WMS Enterprise API - Sistema InmoFormwork")
 
-# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -55,6 +53,7 @@ class ProductoCreate(BaseModel):
     id_producto: str
     nombre: str
     costo_reposicion: float
+    cantidad_inicial: int = 0 # <-- NUEVO: Para poder agregar stock desde el inicio
 
 # --- SEGURIDAD JWT ---
 SECRET_KEY = "InmoFormwork_Clave_Ultra_Segura_2026"
@@ -77,7 +76,6 @@ def get_usuario_actual(token: str = Depends(oauth2_scheme), db: Session = Depend
         raise HTTPException(status_code=401, detail="Usuario no existe")
     return usuario
 
-
 # --- RUTAS DE LA API ---
 
 @app.post("/login/")
@@ -95,7 +93,19 @@ def iniciar_sesion(req: LoginRequest, db: Session = Depends(get_db)):
 @app.get("/dashboard/inventario/")
 def ver_estado_inventario(response: Response, db: Session = Depends(get_db), usuario_activo = Depends(get_usuario_actual)):
     response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
-    return db.query(models.InventarioLotes).all()
+    inventario = db.query(models.InventarioLotes).all()
+    resultado = []
+    
+    for item in inventario:
+        producto = db.query(models.CatalogoProducto).filter_by(id_producto=item.id_producto).first()
+        resultado.append({
+            "id_producto": item.id_producto,
+            "nombre": producto.nombre if producto else "Desconocido",
+            "cantidad_almacen": item.cantidad_almacen,
+            "cantidad_en_obra": item.cantidad_en_obra,
+            "cantidad_mantenimiento": item.cantidad_mantenimiento
+        })
+    return resultado
 
 @app.get("/kardex/")
 def obtener_kardex(response: Response, db: Session = Depends(get_db), usuario_activo = Depends(get_usuario_actual)):
@@ -123,7 +133,7 @@ def registrar_despacho(movimiento: MovimientoCreate, db: Session = Depends(get_d
             inventario.cantidad_almacen -= movimiento.cantidad
             inventario.cantidad_en_obra += movimiento.cantidad
         else:
-            raise HTTPException(status_code=400, detail="Stock insuficiente")
+            raise HTTPException(status_code=400, detail="Stock insuficiente en almacén")
         db.commit()
         return {"mensaje": "Despacho registrado"}
     except HTTPException: raise
@@ -154,21 +164,6 @@ def registrar_devolucion(devolucion: DevolucionCreate, db: Session = Depends(get
     except HTTPException: raise
     except Exception as e: db.rollback(); raise HTTPException(status_code=400, detail=str(e))
 
-@app.get("/obras/{id_obra}/liquidacion/")
-def generar_liquidacion(id_obra: int, db: Session = Depends(get_db), usuario_activo = Depends(get_usuario_actual)):
-    perdidas = db.query(models.GuiaMovimiento).filter(models.GuiaMovimiento.id_obra == id_obra, models.GuiaMovimiento.tipo_movimiento == "PÉRDIDA").all()
-    total_penalidad = 0
-    desglose = []
-    for p in perdidas:
-        producto = db.query(models.CatalogoProducto).filter(models.CatalogoProducto.id_producto == p.id_producto).first()
-        precio = producto.costo_reposicion if producto else 0
-        subtotal = p.cantidad * precio
-        total_penalidad += subtotal
-        desglose.append({"producto": p.id_producto, "cantidad_perdida": p.cantidad, "costo_unitario": precio, "subtotal_cobro": subtotal})
-    return {"id_obra": id_obra, "penalidad_total_moneda": float(total_penalidad), "desglose_perdidas": desglose}
-
-# --- NUEVOS ENDPOINTS: PRODUCTOS Y REPARACIONES ---
-
 @app.post("/productos/")
 def registrar_producto(req: ProductoCreate, db: Session = Depends(get_db), usuario_activo = Depends(get_usuario_actual)):
     if db.query(models.CatalogoProducto).filter_by(id_producto=req.id_producto).first():
@@ -177,7 +172,8 @@ def registrar_producto(req: ProductoCreate, db: Session = Depends(get_db), usuar
     nuevo_prod = models.CatalogoProducto(id_producto=req.id_producto, nombre=req.nombre, tipo_rastreo="LOTE", costo_reposicion=req.costo_reposicion, peso_kg=0.0)
     db.add(nuevo_prod)
     
-    nuevo_lote = models.InventarioLotes(id_producto=req.id_producto, cantidad_almacen=0, cantidad_en_obra=0, cantidad_mantenimiento=0)
+    # NUEVO: Se inicializa con la cantidad que pusiste en el formulario
+    nuevo_lote = models.InventarioLotes(id_producto=req.id_producto, cantidad_almacen=req.cantidad_inicial, cantidad_en_obra=0, cantidad_mantenimiento=0)
     db.add(nuevo_lote)
     
     db.commit()
@@ -197,3 +193,48 @@ def retornar_mantenimiento(req: ReparacionCreate, db: Session = Depends(get_db),
     
     db.commit()
     return {"mensaje": "Equipos retornados al almacén principal"}
+
+# --- NUEVO ENDPOINT: ESTADO DE OBRAS (QUIÉN TIENE QUÉ) ---
+@app.get("/clientes/estado/")
+def estado_clientes(response: Response, db: Session = Depends(get_db), usuario_activo = Depends(get_usuario_actual)):
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    movimientos = db.query(models.GuiaMovimiento).all()
+    obras = {}
+    
+    for m in movimientos:
+        if m.id_obra is None: continue
+        if m.id_obra not in obras:
+            obras[m.id_obra] = {}
+        if m.id_producto not in obras[m.id_obra]:
+            obras[m.id_obra][m.id_producto] = 0
+            
+        if m.tipo_movimiento == "SALIDA":
+            obras[m.id_obra][m.id_producto] += m.cantidad
+        elif m.tipo_movimiento in ["DEVOLUCIÓN", "PÉRDIDA"]:
+            obras[m.id_obra][m.id_producto] -= m.cantidad
+            
+    resultado = []
+    for obra_id, prods in obras.items():
+        activos = []
+        for p_id, cant in prods.items():
+            if cant > 0:
+                prod = db.query(models.CatalogoProducto).filter_by(id_producto=p_id).first()
+                nombre_prod = prod.nombre if prod else "Desconocido"
+                activos.append({"codigo": p_id, "nombre": nombre_prod, "cantidad": cant})
+        if activos:
+            resultado.append({"id_obra": obra_id, "equipos": activos})
+            
+    return resultado
+
+@app.get("/obras/{id_obra}/liquidacion/")
+def generar_liquidacion(id_obra: int, db: Session = Depends(get_db), usuario_activo = Depends(get_usuario_actual)):
+    perdidas = db.query(models.GuiaMovimiento).filter(models.GuiaMovimiento.id_obra == id_obra, models.GuiaMovimiento.tipo_movimiento == "PÉRDIDA").all()
+    total_penalidad = 0
+    desglose = []
+    for p in perdidas:
+        producto = db.query(models.CatalogoProducto).filter(models.CatalogoProducto.id_producto == p.id_producto).first()
+        precio = producto.costo_reposicion if producto else 0
+        subtotal = p.cantidad * precio
+        total_penalidad += subtotal
+        desglose.append({"producto": p.id_producto, "cantidad_perdida": p.cantidad, "costo_unitario": precio, "subtotal_cobro": subtotal})
+    return {"id_obra": id_obra, "penalidad_total_moneda": float(total_penalidad), "desglose_perdidas": desglose}
