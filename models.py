@@ -21,8 +21,11 @@ class InventarioLotes(Base):
 class ObrasClientes(Base):
     __tablename__ = "obras_clientes"
     id_obra = Column(Integer, primary_key=True, index=True)
-    id_cliente = Column(String, nullable=False)
+    ruc = Column(String, nullable=True)
     nombre_proyecto = Column(String, nullable=False)
+    ubicacion = Column(String, nullable=True)
+    encargado = Column(String, nullable=True)
+    telefono = Column(String, nullable=True)
     estado_obra = Column(String, default="Activa")
 
 class GuiaMovimiento(Base):

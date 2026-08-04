@@ -33,6 +33,13 @@ class LoginRequest(BaseModel):
     username: str
     password: str
 
+class ObraCreate(BaseModel):
+    ruc: str = None
+    nombre_proyecto: str
+    ubicacion: str = None
+    encargado: str = None
+    telefono: str = None
+
 class MovimientoCreate(BaseModel):
     id_obra: int
     id_producto: str
@@ -238,3 +245,30 @@ def generar_liquidacion(id_obra: int, db: Session = Depends(get_db), usuario_act
         total_penalidad += subtotal
         desglose.append({"producto": p.id_producto, "cantidad_perdida": p.cantidad, "costo_unitario": precio, "subtotal_cobro": subtotal})
     return {"id_obra": id_obra, "penalidad_total_moneda": float(total_penalidad), "desglose_perdidas": desglose}
+
+# --- NUEVOS ENDPOINTS: MÓDULO DE OBRAS ---
+@app.post("/obras/")
+def registrar_obra(obra: ObraCreate, db: Session = Depends(get_db), usuario_activo = Depends(get_usuario_actual)):
+    nueva_obra = models.ObrasClientes(
+        ruc=obra.ruc,
+        nombre_proyecto=obra.nombre_proyecto,
+        ubicacion=obra.ubicacion,
+        encargado=obra.encargado,
+        telefono=obra.telefono,
+        estado_obra="Activa"
+    )
+    db.add(nueva_obra)
+    db.commit()
+    db.refresh(nueva_obra)
+    return {"mensaje": "Obra registrada con éxito", "id_obra": nueva_obra.id_obra}
+
+@app.get("/obras/")
+def listar_obras(response: Response, db: Session = Depends(get_db), usuario_activo = Depends(get_usuario_actual)):
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    return db.query(models.ObrasClientes).all()
+
+# --- NUEVO ENDPOINT: CATÁLOGO COMPLETO ---
+@app.get("/catalogo/")
+def ver_catalogo_completo(response: Response, db: Session = Depends(get_db), usuario_activo = Depends(get_usuario_actual)):
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    return db.query(models.CatalogoProducto).all()
