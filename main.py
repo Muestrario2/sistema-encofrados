@@ -236,11 +236,23 @@ def generar_liquidacion(id_obra: int, db: Session = Depends(get_db), usuario_act
 # --- NUEVOS ENDPOINTS: OBRAS ---
 @app.post("/obras/")
 def registrar_obra(obra: ObraCreate, db: Session = Depends(get_db), usuario_activo = Depends(get_usuario_actual)):
-    nueva_obra = models.ObrasClientes(ruc=obra.ruc, nombre_proyecto=obra.nombre_proyecto, ubicacion=obra.ubicacion, encargado=obra.encargado, telefono=obra.telefono, estado_obra="Activa")
-    db.add(nueva_obra)
-    db.commit()
-    db.refresh(nueva_obra)
-    return {"mensaje": "Obra registrada con éxito", "id_obra": nueva_obra.id_obra}
+    try:
+        nueva_obra = models.ObrasClientes(
+            id_cliente=obra.ruc if obra.ruc else "CLIENTE-NUEVO", # <- El dato que nos faltaba
+            ruc=obra.ruc, 
+            nombre_proyecto=obra.nombre_proyecto, 
+            ubicacion=obra.ubicacion, 
+            encargado=obra.encargado, 
+            telefono=obra.telefono, 
+            estado_obra="Activa"
+        )
+        db.add(nueva_obra)
+        db.commit()
+        db.refresh(nueva_obra)
+        return {"mensaje": "Obra registrada con éxito", "id_obra": nueva_obra.id_obra}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail="Error en BD: " + str(e))
 
 @app.get("/obras/")
 def listar_obras(response: Response, db: Session = Depends(get_db), usuario_activo = Depends(get_usuario_actual)):
