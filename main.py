@@ -33,13 +33,6 @@ class LoginRequest(BaseModel):
     username: str
     password: str
 
-class ObraCreate(BaseModel):
-    ruc: str = None
-    nombre_proyecto: str
-    ubicacion: str = None
-    encargado: str = None
-    telefono: str = None
-
 class MovimientoCreate(BaseModel):
     id_obra: int
     id_producto: str
@@ -60,7 +53,14 @@ class ProductoCreate(BaseModel):
     id_producto: str
     nombre: str
     costo_reposicion: float
-    cantidad_inicial: int = 0 # <-- NUEVO: Para poder agregar stock desde el inicio
+    cantidad_inicial: int = 0 
+
+class ObraCreate(BaseModel):
+    ruc: str = None
+    nombre_proyecto: str
+    ubicacion: str = None
+    encargado: str = None
+    telefono: str = None
 
 # --- SEGURIDAD JWT ---
 SECRET_KEY = "InmoFormwork_Clave_Ultra_Segura_2026"
@@ -102,7 +102,6 @@ def ver_estado_inventario(response: Response, db: Session = Depends(get_db), usu
     response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
     inventario = db.query(models.InventarioLotes).all()
     resultado = []
-    
     for item in inventario:
         producto = db.query(models.CatalogoProducto).filter_by(id_producto=item.id_producto).first()
         resultado.append({
@@ -179,10 +178,8 @@ def registrar_producto(req: ProductoCreate, db: Session = Depends(get_db), usuar
     nuevo_prod = models.CatalogoProducto(id_producto=req.id_producto, nombre=req.nombre, tipo_rastreo="LOTE", costo_reposicion=req.costo_reposicion, peso_kg=0.0)
     db.add(nuevo_prod)
     
-    # NUEVO: Se inicializa con la cantidad que pusiste en el formulario
     nuevo_lote = models.InventarioLotes(id_producto=req.id_producto, cantidad_almacen=req.cantidad_inicial, cantidad_en_obra=0, cantidad_mantenimiento=0)
     db.add(nuevo_lote)
-    
     db.commit()
     return {"mensaje": "Producto registrado exitosamente"}
 
@@ -197,28 +194,21 @@ def retornar_mantenimiento(req: ReparacionCreate, db: Session = Depends(get_db),
     
     movimiento_reparacion = models.GuiaMovimiento(id_obra=None, id_producto=req.id_producto, tipo_movimiento="REPARACIÓN", cantidad=req.cantidad)
     db.add(movimiento_reparacion)
-    
     db.commit()
     return {"mensaje": "Equipos retornados al almacén principal"}
 
-# --- NUEVO ENDPOINT: ESTADO DE OBRAS (QUIÉN TIENE QUÉ) ---
 @app.get("/clientes/estado/")
 def estado_clientes(response: Response, db: Session = Depends(get_db), usuario_activo = Depends(get_usuario_actual)):
     response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
     movimientos = db.query(models.GuiaMovimiento).all()
     obras = {}
-    
     for m in movimientos:
         if m.id_obra is None: continue
-        if m.id_obra not in obras:
-            obras[m.id_obra] = {}
-        if m.id_producto not in obras[m.id_obra]:
-            obras[m.id_obra][m.id_producto] = 0
+        if m.id_obra not in obras: obras[m.id_obra] = {}
+        if m.id_producto not in obras[m.id_obra]: obras[m.id_obra][m.id_producto] = 0
             
-        if m.tipo_movimiento == "SALIDA":
-            obras[m.id_obra][m.id_producto] += m.cantidad
-        elif m.tipo_movimiento in ["DEVOLUCIÓN", "PÉRDIDA"]:
-            obras[m.id_obra][m.id_producto] -= m.cantidad
+        if m.tipo_movimiento == "SALIDA": obras[m.id_obra][m.id_producto] += m.cantidad
+        elif m.tipo_movimiento in ["DEVOLUCIÓN", "PÉRDIDA"]: obras[m.id_obra][m.id_producto] -= m.cantidad
             
     resultado = []
     for obra_id, prods in obras.items():
@@ -226,11 +216,8 @@ def estado_clientes(response: Response, db: Session = Depends(get_db), usuario_a
         for p_id, cant in prods.items():
             if cant > 0:
                 prod = db.query(models.CatalogoProducto).filter_by(id_producto=p_id).first()
-                nombre_prod = prod.nombre if prod else "Desconocido"
-                activos.append({"codigo": p_id, "nombre": nombre_prod, "cantidad": cant})
-        if activos:
-            resultado.append({"id_obra": obra_id, "equipos": activos})
-            
+                activos.append({"codigo": p_id, "nombre": prod.nombre if prod else "Desconocido", "cantidad": cant})
+        if activos: resultado.append({"id_obra": obra_id, "equipos": activos})
     return resultado
 
 @app.get("/obras/{id_obra}/liquidacion/")
@@ -246,17 +233,10 @@ def generar_liquidacion(id_obra: int, db: Session = Depends(get_db), usuario_act
         desglose.append({"producto": p.id_producto, "cantidad_perdida": p.cantidad, "costo_unitario": precio, "subtotal_cobro": subtotal})
     return {"id_obra": id_obra, "penalidad_total_moneda": float(total_penalidad), "desglose_perdidas": desglose}
 
-# --- NUEVOS ENDPOINTS: MÓDULO DE OBRAS ---
+# --- NUEVOS ENDPOINTS: OBRAS ---
 @app.post("/obras/")
 def registrar_obra(obra: ObraCreate, db: Session = Depends(get_db), usuario_activo = Depends(get_usuario_actual)):
-    nueva_obra = models.ObrasClientes(
-        ruc=obra.ruc,
-        nombre_proyecto=obra.nombre_proyecto,
-        ubicacion=obra.ubicacion,
-        encargado=obra.encargado,
-        telefono=obra.telefono,
-        estado_obra="Activa"
-    )
+    nueva_obra = models.ObrasClientes(ruc=obra.ruc, nombre_proyecto=obra.nombre_proyecto, ubicacion=obra.ubicacion, encargado=obra.encargado, telefono=obra.telefono, estado_obra="Activa")
     db.add(nueva_obra)
     db.commit()
     db.refresh(nueva_obra)
@@ -267,8 +247,18 @@ def listar_obras(response: Response, db: Session = Depends(get_db), usuario_acti
     response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
     return db.query(models.ObrasClientes).all()
 
-# --- NUEVO ENDPOINT: CATÁLOGO COMPLETO ---
-@app.get("/catalogo/")
-def ver_catalogo_completo(response: Response, db: Session = Depends(get_db), usuario_activo = Depends(get_usuario_actual)):
-    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
-    return db.query(models.CatalogoProducto).all()
+# Endpoint para Borrar Obras
+@app.delete("/obras/{id_obra}")
+def eliminar_obra(id_obra: int, db: Session = Depends(get_db), usuario_activo = Depends(get_usuario_actual)):
+    obra = db.query(models.ObrasClientes).filter(models.ObrasClientes.id_obra == id_obra).first()
+    if not obra:
+        raise HTTPException(status_code=404, detail="Obra no encontrada")
+    
+    # Bloqueo de seguridad: No borrar si ya tiene equipos prestados o historial
+    tiene_movimientos = db.query(models.GuiaMovimiento).filter(models.GuiaMovimiento.id_obra == id_obra).first()
+    if tiene_movimientos:
+        raise HTTPException(status_code=400, detail="No puedes borrar una obra que tiene historial de despachos.")
+        
+    db.delete(obra)
+    db.commit()
+    return {"mensaje": "Obra eliminada con éxito"}
